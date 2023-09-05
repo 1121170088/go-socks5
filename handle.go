@@ -16,6 +16,51 @@ type AddressRewriter interface {
 	Rewrite(ctx context.Context, request *Request) (context.Context, *statute.AddrSpec)
 }
 
+// handleConnect is used to handle a connect command
+func (sf *Server) handleConnect(ctx context.Context, writer io.Writer, request *Request) error {
+	// Attempt to connect
+	dial := sf.dial
+	if dial == nil {
+		dial = func(ctx context.Context, net_, addr string) (net.Conn, error) {
+			return net.Dial(net_, addr)
+		}
+	}
+	target, err := dial(ctx, "tcp", request.DestAddr.String())
+	if err != nil {
+		msg := err.Error()
+		resp := statute.RepHostUnreachable
+		if strings.Contains(msg, "refused") {
+			resp = statute.RepConnectionRefused
+		} else if strings.Contains(msg, "network is unreachable") {
+			resp = statute.RepNetworkUnreachable
+		}
+		if err := SendReply(writer, resp, nil); err != nil {
+			return fmt.Errorf("failed to send reply, %v", err)
+		}
+		return fmt.Errorf("connect to %v failed, %v", request.RawDestAddr, err)
+	}
+	defer target.Close()
+
+	// Send success
+	if err := SendReply(writer, statute.RepSuccess, target.LocalAddr()); err != nil {
+		return fmt.Errorf("failed to send reply, %v", err)
+	}
+
+	// Start proxying
+	errCh := make(chan error, 2)
+	sf.goFunc(func() { errCh <- sf.Proxy(target, request.Reader) })
+	sf.goFunc(func() { errCh <- sf.Proxy(writer, target) })
+	// Wait
+	for i := 0; i < 2; i++ {
+		e := <-errCh
+		if e != nil {
+			// return from this function closes target (and conn).
+			return e
+		}
+	}
+	return nil
+}
+
 // A Request represents request received by a server
 type Request struct {
 	statute.Request
@@ -102,51 +147,6 @@ func (sf *Server) handleRequest(write io.Writer, req *Request) error {
 		}
 		return fmt.Errorf("unsupported command[%v]", req.Command)
 	}
-}
-
-// handleConnect is used to handle a connect command
-func (sf *Server) handleConnect(ctx context.Context, writer io.Writer, request *Request) error {
-	// Attempt to connect
-	dial := sf.dial
-	if dial == nil {
-		dial = func(ctx context.Context, net_, addr string) (net.Conn, error) {
-			return net.Dial(net_, addr)
-		}
-	}
-	target, err := dial(ctx, "tcp", request.DestAddr.String())
-	if err != nil {
-		msg := err.Error()
-		resp := statute.RepHostUnreachable
-		if strings.Contains(msg, "refused") {
-			resp = statute.RepConnectionRefused
-		} else if strings.Contains(msg, "network is unreachable") {
-			resp = statute.RepNetworkUnreachable
-		}
-		if err := SendReply(writer, resp, nil); err != nil {
-			return fmt.Errorf("failed to send reply, %v", err)
-		}
-		return fmt.Errorf("connect to %v failed, %v", request.RawDestAddr, err)
-	}
-	defer target.Close()
-
-	// Send success
-	if err := SendReply(writer, statute.RepSuccess, target.LocalAddr()); err != nil {
-		return fmt.Errorf("failed to send reply, %v", err)
-	}
-
-	// Start proxying
-	errCh := make(chan error, 2)
-	sf.goFunc(func() { errCh <- sf.Proxy(target, request.Reader) })
-	sf.goFunc(func() { errCh <- sf.Proxy(writer, target) })
-	// Wait
-	for i := 0; i < 2; i++ {
-		e := <-errCh
-		if e != nil {
-			// return from this function closes target (and conn).
-			return e
-		}
-	}
-	return nil
 }
 
 // handleBind is used to handle a connect command

@@ -318,3 +318,15 @@ func TestNoSupportedAuth_Server(t *testing.T) {
 
 	assert.Equal(t, []byte{statute.VersionSocks5, statute.MethodNoAcceptable}, rsp.Bytes())
 }
+
+func TestSocks(t *testing.T)  {
+
+	upstreamSocks5 := "192.168.8.1:7890"
+	s := NewServer(WithUpstream(upstreamSocks5))
+	s.ListenAndServe("tcp", "127.0.0.1:1111")
+	select {
+	}
+
+
+
+}

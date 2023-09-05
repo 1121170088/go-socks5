@@ -1,7 +1,11 @@
 package socks5
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"github.com/things-go/go-socks5/statute"
 	"io"
 	"net"
 
@@ -112,5 +116,116 @@ func WithBindHandle(h func(ctx context.Context, writer io.Writer, request *Reque
 func WithAssociateHandle(h func(ctx context.Context, writer io.Writer, request *Request) error) Option {
 	return func(s *Server) {
 		s.userAssociateHandle = h
+	}
+}
+
+func WithUpstream(upstream string) Option {
+	return func(s *Server) {
+		MaxAddrLen := 1 + 1 + 255 + 2
+
+		const (
+			AtypIPv4       = 1
+			AtypDomainName = 3
+			AtypIPv6       = 4
+		)
+
+		ReadAddr := func(r io.Reader, b []byte) ([]byte, error) {
+			if len(b) < MaxAddrLen {
+				return nil, io.ErrShortBuffer
+			}
+			_, err := io.ReadFull(r, b[:1]) // read 1st byte for address type
+			if err != nil {
+				return nil, err
+			}
+
+			switch b[0] {
+			case AtypDomainName:
+				_, err = io.ReadFull(r, b[1:2]) // read 2nd byte for domain length
+				if err != nil {
+					return nil, err
+				}
+				domainLength := uint16(b[1])
+				_, err = io.ReadFull(r, b[2:2+domainLength+2])
+				return b[:1+1+domainLength+2], err
+			case AtypIPv4:
+				_, err = io.ReadFull(r, b[1:1+net.IPv4len+2])
+				return b[:1+net.IPv4len+2], err
+			case AtypIPv6:
+				_, err = io.ReadFull(r, b[1:1+net.IPv6len+2])
+				return b[:1+net.IPv6len+2], err
+			}
+
+			return nil, errors.New("ErrAddressNotSupported")
+		}
+
+		clientHandshake := func(rw io.ReadWriter, addr []byte) ([]byte, error) {
+
+			var command byte = 1
+			buf := make([]byte, MaxAddrLen)
+			var err error
+
+			// VER, NMETHODS, METHODS
+			_, err = rw.Write([]byte{5, 1, 0})
+			if err != nil {
+				return nil, err
+			}
+
+			// VER, METHOD
+			if _, err := io.ReadFull(rw, buf[:2]); err != nil {
+				return nil, err
+			}
+
+			if buf[0] != 5 {
+				return nil, errors.New("SOCKS version error")
+			}
+
+			// VER, CMD, RSV, ADDR
+			if _, err := rw.Write(bytes.Join([][]byte{{5, command, 0}, addr}, []byte{})); err != nil {
+				return nil, err
+			}
+
+			// VER, REP, RSV
+			if _, err := io.ReadFull(rw, buf[:3]); err != nil {
+				return nil, err
+			}
+
+			return ReadAddr(rw, buf)
+		}
+
+		serializesSocksAddr := func( request *Request) []byte {
+			return request.Bytes()[3:]
+		}
+		connectHandle := func(ctx context.Context, writer io.Writer, request *Request) error {
+
+			dialer := &net.Dialer{}
+			c, err := dialer.DialContext(ctx, "tcp", upstream)
+			if err != nil {
+				return err
+			}
+			defer c.Close()
+
+			if _, err := clientHandshake(c, serializesSocksAddr(request)); err != nil {
+				return err
+			}
+
+			// Send success
+			if err := SendReply(writer, statute.RepSuccess, c.LocalAddr()); err != nil {
+				return fmt.Errorf("failed to send reply, %v", err)
+			}
+			// Start proxying
+			errCh := make(chan error, 2)
+			s.goFunc(func() { errCh <- s.Proxy(c, request.Reader) })
+			s.goFunc(func() { errCh <- s.Proxy(writer, c) })
+			// Wait
+			for i := 0; i < 2; i++ {
+				e := <-errCh
+				if e != nil {
+					// return from this function closes target (and conn).
+					return e
+				}
+			}
+			return nil
+		}
+		s.userConnectHandle = connectHandle
 	}
 }
