@@ -121,6 +121,9 @@ func WithAssociateHandle(h func(ctx context.Context, writer io.Writer, request *
 
 func WithUpstream(upstream string) Option {
 	return func(s *Server) {
+		if upstream == "" {
+			return
+		}
 		MaxAddrLen := 1 + 1 + 255 + 2
 
 		const (
