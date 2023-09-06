@@ -124,6 +124,7 @@ func WithUpstream(upstream string) Option {
 		if upstream == "" {
 			return
 		}
+		s.hasUpstream = true
 		MaxAddrLen := 1 + 1 + 255 + 2
 
 		const (

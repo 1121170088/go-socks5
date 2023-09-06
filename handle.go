@@ -98,7 +98,7 @@ func (sf *Server) handleRequest(write io.Writer, req *Request) error {
 	ctx := context.Background()
 	// Resolve the address if we have a FQDN
 	dest := req.RawDestAddr
-	if dest.FQDN != "" {
+	if !sf.hasUpstream && dest.FQDN != "" {
 		ctx, dest.IP, err = sf.resolver.Resolve(ctx, dest.FQDN)
 		if err != nil {
 			if err := SendReply(write, statute.RepHostUnreachable, nil); err != nil {

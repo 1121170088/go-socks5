@@ -321,8 +321,9 @@ func TestNoSupportedAuth_Server(t *testing.T) {
 
 func TestSocks(t *testing.T)  {
 
-	upstreamSocks5 := "192.168.8.1:7890"
-	s := NewServer(WithUpstream(upstreamSocks5))
+	//upstreamSocks5 := "192.168.8.1:7890"
+	//s := NewServer(WithUpstream(upstreamSocks5))
+	s := NewServer()
 	s.ListenAndServe("tcp", "127.0.0.1:1111")
 	select {
 	}

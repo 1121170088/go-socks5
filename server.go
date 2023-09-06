@@ -54,6 +54,7 @@ type Server struct {
 	userConnectHandle   func(ctx context.Context, writer io.Writer, request *Request) error
 	userBindHandle      func(ctx context.Context, writer io.Writer, request *Request) error
 	userAssociateHandle func(ctx context.Context, writer io.Writer, request *Request) error
+	hasUpstream bool
 }
 
 // NewServer creates a new Server
